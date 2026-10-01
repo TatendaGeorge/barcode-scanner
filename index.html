@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pocket Barcode Scanner</title>
+<meta name="description" content="Scan barcodes with your camera or a photo, right in the browser.">
+
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#12171F">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Barcode">
+<meta name="mobile-web-app-capable" content="yes">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: single narrow column like a handheld scanner — viewfinder, actions, readout, log */
+:root {
+  --bg: #F3F5F7;
+  --panel: #FFFFFF;
+  --ink: #12171F;
+  --muted: #5B6573;
+  --line: #DCE1E7;
+  --laser: #E2241B;
+  --laser-soft: #FCE3E1;
+  --ok: #1E7A4C;
+  --ok-soft: #DDF2E6;
+  --warn: #9A5B00;
+  --warn-soft: #FBEBCF;
+  --finder: #0E1218;
+  --finder-ink: #C9D1DB;
+  --font-ui: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0D1117; --panel: #161C24; --ink: #E7ECF2; --muted: #96A1AF; --line: #2A333F;
+  --laser: #FF4A40; --laser-soft: #3A1715; --ok: #5FD198; --ok-soft: #12301F;
+  --warn: #F2B758; --warn-soft: #36270C; --finder: #05070A; --finder-ink: #9AA6B4; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0D1117; --panel: #161C24; --ink: #E7ECF2; --muted: #96A1AF; --line: #2A333F;
+  --laser: #FF4A40; --laser-soft: #3A1715; --ok: #5FD198; --ok-soft: #12301F;
+  --warn: #F2B758; --warn-soft: #36270C; --finder: #05070A; --finder-ink: #9AA6B4; color-scheme: dark }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 480px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 18px; }
+
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--laser); }
+.engine { font-family: var(--font-code); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+
+.finder { position: relative; aspect-ratio: 4 / 3; max-width: 100%; background: var(--finder); border-radius: 14px; overflow: hidden; display: grid; place-items: center; }
+.finder video, .finder img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.finder .idle { color: var(--finder-ink); font-size: 13px; text-align: center; padding: 0 24px; z-index: 1; }
+.finder .idle strong { display: block; font-size: 15px; color: #fff; font-weight: 600; margin-bottom: 4px; }
+.corners { position: absolute; inset: 22% 12%; z-index: 2; pointer-events: none; }
+.corners i { position: absolute; width: 22px; height: 22px; border: 3px solid #fff; opacity: .85; }
+.corners i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+.corners i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+.corners i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+.corners i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+.laser { position: absolute; left: 10%; right: 10%; top: 50%; height: 2px; background: var(--laser); box-shadow: 0 0 10px 2px rgba(226,36,27,.55); z-index: 3; opacity: .35; }
+.finder.live .laser { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .finder.live .laser { animation: sweep 1.6s ease-in-out infinite alternate; }
+  @keyframes sweep { from { transform: translateY(-46px); } to { transform: translateY(46px); } }
+}
+
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.btn { appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: 600 14px/1.2 var(--font-ui); padding: 13px 12px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; text-align: center; }
+.btn:hover { border-color: var(--muted); }
+.btn:focus-visible { outline: 2px solid var(--laser); outline-offset: 2px; }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.wide { grid-column: 1 / -1; }
+.btn[disabled] { opacity: .5; cursor: default; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+.status { font-size: 13px; color: var(--muted); min-height: 1.5em; margin: -6px 2px 0; }
+.status.err { color: var(--laser); }
+
+.readout { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 12px; }
+.label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.code { font-family: var(--font-code); font-size: clamp(22px, 7vw, 30px); font-weight: 600; letter-spacing: 0.04em; word-break: break-all; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; font-weight: 500; padding: 3px 9px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); color: var(--ink); }
+.chip.ok { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+.chip.bad { background: var(--laser-soft); border-color: transparent; color: var(--laser); }
+.chip.ex { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row .btn { flex: 1 1 140px; min-height: 42px; padding: 10px; font-size: 13px; }
+
+.log h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+.log ol { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
+.log li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 11px 14px; border-top: 1px solid var(--line); }
+.log li:first-child { border-top: 0; }
+.log .c { font-family: var(--font-code); font-size: 14px; min-width: 0; word-break: break-all; font-variant-numeric: tabular-nums; }
+.log .m { font-size: 12px; color: var(--muted); }
+.log .t { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.note { font-size: 13px; color: var(--muted); margin: 0; max-width: 65ch; }
+.note code { font-family: var(--font-code); font-size: 12px; }
+canvas#sample { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Pocket <span>Barcode</span> Scanner</h1>
+    <div class="engine" id="engine">Loading decoder…</div>
+  </header>
+
+  <div class="finder" id="finder">
+    <div class="idle" id="idle"><strong>Point at a barcode</strong>Start the camera, or take a photo of a barcode.</div>
+    <video id="video" playsinline muted hidden></video>
+    <img id="preview" alt="Photo being decoded" hidden>
+    <div class="corners" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="laser" aria-hidden="true"></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn primary" id="camBtn" type="button">Start camera</button>
+    <label class="btn" for="photo">Scan from photo</label>
+    <input type="file" id="photo" accept="image/*" capture="environment">
+    <button class="btn wide" id="sampleBtn" type="button">Try a sample barcode</button>
+  </div>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+
+  <section class="readout" aria-label="Last scan">
+    <div class="label">Last scan</div>
+    <div class="code" id="code">6001234567899</div>
+    <div class="chips" id="chips"><span class="chip ex">Example</span><span class="chip">EAN-13</span><span class="chip ok">Check digit valid</span><span class="chip">GS1 prefix: South Africa</span></div>
+    <div class="row">
+      <button class="btn" id="copyBtn" type="button">Copy code</button>
+      <button class="btn" id="againBtn" type="button">Scan another</button>
+    </div>
+  </section>
+
+  <section class="log">
+    <h2>This session</h2>
+    <ol id="log"><li><span class="c">6001234567899</span><span class="t">Example</span><span class="m">EAN-13 · sample</span></li></ol>
+  </section>
+
+  <p class="note">Live camera scanning needs the page served over HTTPS with camera permission. Where the camera is blocked, <em>Scan from photo</em> opens your phone camera through the file picker and decodes the picture instead.</p>
+  <canvas id="sample" width="10" height="10"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const finder = $('finder'), video = $('video'), preview = $('preview'), idle = $('idle');
+  const statusEl = $('status'), codeEl = $('code'), chipsEl = $('chips'), logEl = $('log');
+  let reader = null, stream = null, controls = null, loopId = null, detector = null, lastCode = codeEl.textContent;
+  let firstReal = true;
+
+  const FORMAT_NAMES = {
+    ean_13: 'EAN-13', ean_8: 'EAN-8', upc_a: 'UPC-A', upc_e: 'UPC-E', code_128: 'Code 128', code_39: 'Code 39',
+    code_93: 'Code 93', itf: 'ITF', codabar: 'Codabar', qr_code: 'QR code', data_matrix: 'Data Matrix', pdf417: 'PDF417', aztec: 'Aztec'
+  };
+
+  function setStatus(msg, err) { statusEl.textContent = msg || ''; statusEl.classList.toggle('err', !!err); }
+
+  // ---------- decoder setup ----------
+  function zxingFormatName(f) {
+    if (!window.ZXing) return 'Barcode';
+    const n = ZXing.BarcodeFormat[f] || String(f);
+    return FORMAT_NAMES[String(n).toLowerCase()] || String(n).replace(/_/g, ' ');
+  }
+  function initDecoders() {
+    if (window.ZXing) {
+      const hints = new Map();
+      const F = ZXing.BarcodeFormat;
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF, F.QR_CODE, F.DATA_MATRIX]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      reader = new ZXing.BrowserMultiFormatReader(hints);
+    }
+    if ('BarcodeDetector' in window) {
+      BarcodeDetector.getSupportedFormats().then(fmts => {
+        if (fmts && fmts.length) { detector = new BarcodeDetector({ formats: fmts }); }
+        updateEngine();
+      }).catch(updateEngine);
+    }
+    updateEngine();
+  }
+  function updateEngine() {
+    $('engine').textContent = detector ? 'Built-in detector + ZXing' : reader ? 'ZXing decoder' : 'Decoder unavailable';
+  }
+
+  // ---------- result handling ----------
+  function eanCheckValid(d) {
+    if (!/^\d+$/.test(d) || ![8, 12, 13, 14].includes(d.length)) return null;
+    const digits = d.split('').map(Number), check = digits.pop();
+    let sum = 0;
+    digits.reverse().forEach((n, i) => { sum += n * (i % 2 === 0 ? 3 : 1); });
+    return (10 - (sum % 10)) % 10 === check;
+  }
+  function gs1Origin(d) {
+    if (!/^\d{13}$/.test(d)) return null;
+    const p = +d.slice(0, 3);
+    if (p === 978 || p === 979) return 'Book (ISBN)';
+    if (p >= 600 && p <= 601) return 'GS1 prefix: South Africa';
+    if (p <= 19 || (p >= 30 && p <= 39) || (p >= 60 && p <= 139)) return 'GS1 prefix: USA / Canada';
+    if (p >= 500 && p <= 509) return 'GS1 prefix: United Kingdom';
+    if (p >= 400 && p <= 440) return 'GS1 prefix: Germany';
+    if (p >= 690 && p <= 699) return 'GS1 prefix: China';
+    if (p >= 300 && p <= 379) return 'GS1 prefix: France';
+    if (p >= 490 && p <= 499) return 'GS1 prefix: Japan';
+    if (p >= 930 && p <= 939) return 'GS1 prefix: Australia';
+    if (p >= 616 && p <= 616) return 'GS1 prefix: Kenya';
+    if (p >= 600 && p <= 699) return 'GS1 prefix: Africa / Asia region';
+    return null;
+  }
+  function chip(text, cls) { const s = document.createElement('span'); s.className = 'chip' + (cls ? ' ' + cls : ''); s.textContent = text; return s; }
+
+  function showResult(text, format, source) {
+    lastCode = text;
+    codeEl.textContent = text;
+    chipsEl.replaceChildren();
+    chipsEl.append(chip(format));
+    const ok = eanCheckValid(text);
+    if (ok !== null && /EAN|UPC|ITF/.test(format)) chipsEl.append(chip(ok ? 'Check digit valid' : 'Check digit wrong', ok ? 'ok' : 'bad'));
+    const origin = gs1Origin(text);
+    if (origin && /EAN/.test(format)) chipsEl.append(chip(origin));
+    if (/^https?:\/\//i.test(text)) chipsEl.append(chip('Link'));
+
+    if (firstReal) { logEl.replaceChildren(); firstReal = false; }
+    const li = document.createElement('li');
+    const c = document.createElement('span'); c.className = 'c'; c.textContent = text;
+    const t = document.createElement('span'); t.className = 't';
+    t.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const m = document.createElement('span'); m.className = 'm'; m.textContent = format + ' · ' + source;
+    li.append(c, t, m);
+    logEl.prepend(li);
+    setStatus('Read ' + format + ' from ' + source + '.');
+    try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+  }
+
+  // ---------- image decoding (photo + sample) ----------
+  function loadImage(src) {
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+  }
+  function toCanvas(img, maxSide, rotate) {
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+    const cv = document.createElement('canvas');
+    cv.width = rotate ? h : w; cv.height = rotate ? w : h;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    if (rotate) { ctx.translate(h, 0); ctx.rotate(Math.PI / 2); }
+    ctx.drawImage(img, 0, 0, w, h);
+    return cv;
+  }
+  async function decodeCanvas(cv) {
+    if (detector) {
+      try {
+        const found = await detector.detect(cv);
+        if (found && found.length) return { text: found[0].rawValue, format: FORMAT_NAMES[found[0].format] || found[0].format };
+      } catch (e) {}
+    }
+    if (reader) {
+      try {
+        const im = await loadImage(cv.toDataURL('image/png'));
+        const r = await reader.decodeFromImageElement(im);
+        return { text: r.getText(), format: zxingFormatName(r.getBarcodeFormat()) };
+      } catch (e) {}
+    }
+    return null;
+  }
+  async function decodeImage(img, source) {
+    setStatus('Decoding…');
+    const attempts = [[1600, false], [900, false], [1600, true]];
+    for (const [size, rot] of attempts) {
+      const res = await decodeCanvas(toCanvas(img, size, rot));
+      if (res) { showResult(res.text, res.format, source); return true; }
+    }
+    setStatus('No barcode found. Fill more of the frame with the barcode, keep it sharp and avoid glare, then try again.', true);
+    return false;
+  }
+
+  $('photo').addEventListener('change', async e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    stopCamera();
+    const url = URL.createObjectURL(file);
+    preview.src = url; preview.hidden = false; idle.hidden = true;
+    try { await decodeImage(await loadImage(url), 'photo'); }
+    catch (err) { setStatus('That file could not be opened as an image.', true); }
+  });
+
+  // ---------- sample EAN-13 ----------
+  const L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+  const R = L.map(s => s.replace(/./g, b => b === '0' ? '1' : '0'));
+  const G = R.map(s => s.split('').reverse().join(''));
+  const PARITY = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+  function withCheck(d12) {
+    let sum = 0; d12.split('').reverse().forEach((n, i) => { sum += +n * (i % 2 === 0 ? 3 : 1); });
+    return d12 + ((10 - sum % 10) % 10);
+  }
+  function drawEan13(code) {
+    const d = code.split('').map(Number), par = PARITY[d[0]];
+    let bits = '101';
+    for (let i = 1; i <= 6; i++) bits += (par[i - 1] === 'L' ? L : G)[d[i]];
+    bits += '01010';
+    for (let i = 7; i <= 12; i++) bits += R[d[i]];
+    bits += '101';
+    const mod = 4, quiet = 12, w = (bits.length + quiet * 2) * mod, h = 220;
+    const cv = $('sample'); cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#000';
+    for (let i = 0; i < bits.length; i++) if (bits[i] === '1') ctx.fillRect((quiet + i) * mod, 20, mod, 160);
+    ctx.font = '600 26px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(code, w / 2, 210);
+    return cv;
+  }
+  $('sampleBtn').addEventListener('click', async () => {
+    stopCamera();
+    const samples = ['600123456789', '978014044913', '600900102030'];
+    const code = withCheck(samples[Math.floor(Math.random() * samples.length)]);
+    const cv = drawEan13(code);
+    const url = cv.toDataURL('image/png');
+    preview.src = url; preview.hidden = false; idle.hidden = true;
+    preview.style.objectFit = 'contain'; preview.style.background = '#fff';
+    await decodeImage(await loadImage(url), 'sample image');
+  });
+
+  // ---------- live camera ----------
+  function stopCamera() {
+    if (loopId) { cancelAnimationFrame(loopId); loopId = null; }
+    if (controls && controls.stop) { try { controls.stop(); } catch (e) {} controls = null; }
+    if (reader && reader.reset) { try { reader.reset(); } catch (e) {} }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    video.hidden = true; finder.classList.remove('live');
+    $('camBtn').textContent = 'Start camera';
+  }
+  async function startCamera() {
+    preview.hidden = true; preview.removeAttribute('style');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus('Live camera isn’t available here. Use Scan from photo, or open this page from an HTTPS site.', true); return;
+    }
+    setStatus('Starting camera…');
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false });
+    } catch (err) {
+      const blocked = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+      setStatus(blocked ? 'Camera access is blocked on this page. Use Scan from photo instead, or host the page on your own HTTPS site for live scanning.' : 'No camera could be started (' + (err && err.name || 'error') + '). Use Scan from photo instead.', true);
+      return;
+    }
+    video.srcObject = stream; video.hidden = false; idle.hidden = true;
+    await video.play().catch(() => {});
+    finder.classList.add('live');
+    $('camBtn').textContent = 'Stop camera';
+    setStatus('Hold the barcode inside the frame.');
+
+    if (detector) {
+      let last = 0;
+      const tick = async ts => {
+        if (!stream) return;
+        if (ts - last > 150 && video.readyState >= 2) {
+          last = ts;
+          try {
+            const found = await detector.detect(video);
+            if (found && found.length) {
+              const f = found[0]; stopCamera();
+              showResult(f.rawValue, FORMAT_NAMES[f.format] || f.format, 'camera'); return;
+            }
+          } catch (e) {}
+        }
+        loopId = requestAnimationFrame(tick);
+      };
+      loopId = requestAnimationFrame(tick);
+    } else if (reader) {
+      const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true });
+      let last = 0;
+      const tick = ts => {
+        if (!stream) return;
+        if (ts - last > 250 && video.readyState >= 2) {
+          last = ts;
+          cv.width = video.videoWidth; cv.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          try {
+            const lum = new ZXing.HTMLCanvasElementLuminanceSource(cv);
+            const bmp = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));
+            const r = reader.decodeBitmap(bmp);
+            if (r) { stopCamera(); showResult(r.getText(), zxingFormatName(r.getBarcodeFormat()), 'camera'); return; }
+          } catch (e) {}
+        }
+        loopId = requestAnimationFrame(tick);
+      };
+      loopId = requestAnimationFrame(tick);
+    } else {
+      setStatus('The decoder didn’t load, so nothing can be read. Check your connection and reload.', true);
+    }
+  }
+  $('camBtn').addEventListener('click', () => stream ? (stopCamera(), setStatus('Camera stopped.')) : startCamera());
+
+  $('againBtn').addEventListener('click', () => {
+    preview.hidden = true; preview.removeAttribute('style'); idle.hidden = false;
+    setStatus('Ready. Start the camera or take a photo.');
+  });
+  $('copyBtn').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(lastCode); setStatus('Copied ' + lastCode + '.'); }
+    catch (e) {
+      const r = document.createRange(); r.selectNodeContents(codeEl);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      setStatus('Code selected. Copy it from the selection.');
+    }
+  });
+
+  initDecoders();
+  if (!reader && !('BarcodeDetector' in window)) setStatus('The decoder didn’t load. Check your connection and reload.', true);
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+  }
+})();
+</script>
+</body>
+</html>
