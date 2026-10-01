@@ -29,6 +29,7 @@ export function ScannerView({ onScan, hint }: ScannerViewProps) {
   }, []);
 
   function handleDetect(text: string, format: string) {
+    scannerRef.current?.feedback();
     setFlash(true);
     setTimeout(() => setFlash(false), 250);
     setStatus(`Read ${format}.`);
@@ -75,6 +76,7 @@ export function ScannerView({ onScan, hint }: ScannerViewProps) {
     const file = input.files?.[0];
     input.value = '';
     if (!file || !scannerRef.current) return;
+    scannerRef.current.primeAudio(); // must happen before any await to still count as gesture-triggered
     setStatus('Decoding…');
     setStatusErr(false);
     const res = await scannerRef.current.decodeFile(file);
@@ -91,6 +93,7 @@ export function ScannerView({ onScan, hint }: ScannerViewProps) {
     e.preventDefault();
     const code = manualCode.trim();
     if (!code) return;
+    scannerRef.current?.primeAudio();
     scannerRef.current?.resetDebounce();
     handleDetect(code, 'Manual');
     setManualCode('');

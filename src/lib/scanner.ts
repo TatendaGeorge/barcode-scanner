@@ -29,34 +29,6 @@ function zxingFormatName(f: BarcodeFormat): string {
   return FORMAT_NAMES[String(n).toLowerCase()] || String(n).replace(/_/g, ' ');
 }
 
-function beep() {
-  try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new Ctx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = 880;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.12);
-    osc.onended = () => ctx.close();
-  } catch {
-    // Audio not available — not fatal, vibration + flash still fire.
-  }
-}
-
-function feedback() {
-  beep();
-  try {
-    navigator.vibrate?.(60);
-  } catch {
-    // ignore
-  }
-}
-
 export class Scanner {
   private reader: BrowserMultiFormatReader | null = null;
   private detector: InstanceType<typeof window.BarcodeDetector> | null = null;
@@ -64,6 +36,56 @@ export class Scanner {
   private loopId: number | null = null;
   private lastCode: string | null = null;
   private lastCodeAt = 0;
+  private audioCtx: AudioContext | null = null;
+
+  /**
+   * Browsers block audio that isn't tied to a user gesture, and a barcode read from the
+   * camera's detection loop (a requestAnimationFrame callback) doesn't count as one — so
+   * creating the AudioContext there, like the first version of this did, produced a
+   * context stuck in "suspended" and no sound. Call this synchronously from an actual
+   * click/change handler (Start camera, the photo input, the manual-entry form) to create
+   * and resume the context while it still counts as gesture-triggered; every later beep()
+   * then reuses that already-running context, including from the detection loop.
+   */
+  primeAudio(): void {
+    if (!this.audioCtx) {
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      this.audioCtx = new Ctx();
+    }
+    if (this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
+  }
+
+  private beep(): void {
+    const ctx = this.audioCtx;
+    if (!ctx) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 880;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.12);
+    } catch {
+      // Audio not available — not fatal, vibration + flash still fire.
+    }
+  }
+
+  /** Beep + vibrate. Public so callers can fire it uniformly for every scan source
+   *  (camera, photo decode, manual entry), not just the live camera loop. */
+  feedback(): void {
+    this.beep();
+    try {
+      navigator.vibrate?.(60);
+    } catch {
+      // ignore
+    }
+  }
 
   async init(): Promise<'native' | 'zxing' | 'none'> {
     const hints = new Map();
@@ -103,6 +125,7 @@ export class Scanner {
   }
 
   async start(video: HTMLVideoElement, onDetect: (r: DecodeResult) => void): Promise<void> {
+    this.primeAudio();
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('camera-unavailable');
     }
@@ -125,7 +148,6 @@ export class Scanner {
               const f = found[0];
               const format = FORMAT_NAMES[f.format] || f.format;
               if (this.accept(f.rawValue)) {
-                feedback();
                 onDetect({ text: f.rawValue, format });
               }
             }
@@ -154,7 +176,6 @@ export class Scanner {
             if (r) {
               const format = zxingFormatName(r.getBarcodeFormat());
               if (this.accept(r.getText())) {
-                feedback();
                 onDetect({ text: r.getText(), format });
               }
             }
